@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { AiError } from "@/lib/ai/types";
 import { ForbiddenError, UnauthorizedError } from "@/lib/auth/rbac";
-import { HttpError } from "@/lib/errors";
+import { BadRequestError, HttpError, PayloadTooLargeError } from "@/lib/errors";
 import { log } from "@/lib/log";
 
 export type ErrorInfo = { status: number; body: { error: string; issues?: unknown } };
@@ -31,4 +31,45 @@ export function errorInfo(err: unknown): ErrorInfo {
 export function errorResponse(err: unknown): Response {
   const { status, body } = errorInfo(err);
   return Response.json(body, { status });
+}
+
+/** Largest JSON body any notes route accepts (a note body is at most 20,000 characters). */
+export const JSON_BODY_LIMIT = 64 * 1024;
+
+/**
+ * Read the request body exactly once, as bytes, refusing anything over `limit` bytes.
+ * Checks Content-Length first, then counts while streaming so a lying header can't get past.
+ */
+export async function readBodyCapped(request: Request, limit: number): Promise<Buffer> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw new PayloadTooLargeError(limit);
+  if (!request.body) return Buffer.alloc(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw new PayloadTooLargeError(limit);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Parse a UTF-8 JSON body; 400 when it isn't valid JSON. */
+export function parseJsonBody(bytes: Buffer): unknown {
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new BadRequestError("Body must be valid JSON");
+  }
+}
+
+/** Capped read plus JSON parse: 413 when too large, 400 when not JSON. */
+export async function readJson(request: Request, limit: number = JSON_BODY_LIMIT): Promise<unknown> {
+  return parseJsonBody(await readBodyCapped(request, limit));
 }

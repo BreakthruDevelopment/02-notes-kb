@@ -57,6 +57,12 @@ const viewColumns = (actorId: string) => ({
   access: accessSql(actorId),
 });
 
+/**
+ * The conflict token must always move forward: now(), but never less than 1 ms past the old value,
+ * so two writes in the same millisecond (or a clock step back) can't leave a stale token valid.
+ */
+const nextUpdatedAt = () => sql`greatest(now(), ${note.updatedAt} + interval '1 millisecond')`;
+
 /** The one place a single note is loaded for an actor. Unreadable (or missing) is a 404. */
 async function loadReadable(actor: Actor, id: string): Promise<NoteView> {
   const [row] = await db()
@@ -136,7 +142,10 @@ export async function updateNote(actor: Actor, id: string, input: unknown): Prom
   const data = updateNoteSchema.parse(input);
   const current = await loadReadable(actor, noteId);
   if (current.access === "read") throw forbidden("You have read-only access to this note.");
-  if (data.visibility !== undefined) assertManage(actor, current);
+  // Only a real visibility change is owner-only: an editor saving a form that echoes the
+  // unchanged value must succeed.
+  const visibilityChange = data.visibility !== undefined && data.visibility !== current.visibility ? data.visibility : undefined;
+  if (visibilityChange !== undefined) assertManage(actor, current);
 
   const contentChanged = data.title !== undefined || data.body !== undefined;
   const rows = await db()
@@ -144,10 +153,10 @@ export async function updateNote(actor: Actor, id: string, input: unknown): Prom
     .set({
       ...(data.title !== undefined ? { title: data.title } : {}),
       ...(data.body !== undefined ? { body: data.body } : {}),
-      ...(data.visibility !== undefined ? { visibility: data.visibility } : {}),
+      ...(visibilityChange !== undefined ? { visibility: visibilityChange } : {}),
       // Content changes make the index stale until the hook re-embeds.
       ...(contentChanged ? { indexStatus: "pending" as const } : {}),
-      updatedAt: sql`now()`,
+      updatedAt: nextUpdatedAt(),
     })
     .where(and(eq(note.id, noteId), eq(note.updatedAt, new Date(data.updatedAt)), editableBy(actor.id)))
     .returning();
@@ -170,7 +179,7 @@ export async function setVisibility(actor: Actor, id: string, visibility: unknow
   assertManage(actor, current);
   const [row] = await db()
     .update(note)
-    .set({ visibility: value })
+    .set({ visibility: value, updatedAt: nextUpdatedAt() })
     .where(and(eq(note.id, noteId), eq(note.ownerId, actor.id)))
     .returning();
   if (!row) throw new NotFoundError("Note not found");
@@ -210,7 +219,11 @@ export async function listShares(actor: Actor, id: string): Promise<ShareRow[]> 
     .orderBy(asc(user.email));
 }
 
-/** The same body whether or not the email belongs to a user, so it can't be used to probe for accounts. */
+/**
+ * The same body whether or not the email belongs to a user. That is not enough on its own: the
+ * owner's share list shows which emails matched, so the hourly rate limit is the real control
+ * against probing for accounts.
+ */
 export type ShareResult = { shared: true };
 
 export async function shareNote(actor: Actor, id: string, input: unknown): Promise<ShareResult> {
@@ -222,6 +235,12 @@ export async function shareNote(actor: Actor, id: string, input: unknown): Promi
   // Record every attempt, known email or not, and refuse the 31st in a rolling hour.
   await db().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"share:" + actor.id}, 0))`);
+    // Rows past the window can never count again; drop them.
+    await tx
+      .delete(rateEvent)
+      .where(
+        and(eq(rateEvent.userId, actor.id), eq(rateEvent.kind, "share"), sql`${rateEvent.at} <= now() - interval '1 hour'`),
+      );
     const [{ n }] = await tx
       .select({ n: count() })
       .from(rateEvent)
@@ -304,18 +323,22 @@ export async function keywordSearch(actor: Actor, q: unknown): Promise<SearchHit
   const { q: query } = searchSchema.parse({ q });
   const tsq = sql`websearch_to_tsquery('english', ${query})`;
 
-  const chunkHits = await db().execute<{ note_id: string; title: string; snippet: string; rank: number }>(sql`
-    select distinct on (${note.id}) ${note.id} as note_id, ${note.title} as title,
-      ts_headline('english', ${noteChunk.content}, ${tsq}, 'StartSel=«, StopSel=», MaxWords=30, MinWords=10, MaxFragments=1') as snippet,
-      ts_rank(${noteChunk.tsv}, ${tsq}) as rank
-    from ${noteChunk}
-    inner join ${note} on ${note.id} = ${noteChunk.noteId}
-    where ${readableBy(actor.id)} and ${noteChunk.tsv} @@ ${tsq}
-    order by ${note.id}, rank desc
+  // Rank and cut to the top 20 notes first; ts_headline is expensive, so it runs only on those.
+  const chunkHits = await db().execute<{ note_id: string; title: string; snippet: string }>(sql`
+    select best.note_id, best.title,
+      ts_headline('english', best.content, ${tsq}, 'StartSel=«, StopSel=», MaxWords=30, MinWords=10, MaxFragments=1') as snippet
+    from (
+      select distinct on (${note.id}) ${note.id} as note_id, ${note.title} as title, ${noteChunk.content} as content,
+        ts_rank(${noteChunk.tsv}, ${tsq}) as rank
+      from ${noteChunk}
+      inner join ${note} on ${note.id} = ${noteChunk.noteId}
+      where ${readableBy(actor.id)} and ${noteChunk.tsv} @@ ${tsq}
+      order by ${note.id}, rank desc
+    ) best
+    order by best.rank desc, best.note_id
+    limit ${SEARCH_LIMIT}
   `);
-  const ranked = [...chunkHits].sort((a, b) => b.rank - a.rank).slice(0, SEARCH_LIMIT);
-
-  const hits: SearchHit[] = ranked.map((r) => ({ noteId: r.note_id, title: r.title, snippet: r.snippet }));
+  const hits: SearchHit[] = [...chunkHits].map((r) => ({ noteId: r.note_id, title: r.title, snippet: r.snippet }));
   if (hits.length < SEARCH_LIMIT) {
     const needle = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
     const titleHits = await db()

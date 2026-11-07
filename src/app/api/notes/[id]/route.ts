@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth/session";
 import { requireSameOrigin } from "@/lib/csrf";
-import { errorResponse } from "@/lib/http";
+import { errorResponse, readJson } from "@/lib/http";
 import { deleteNote, getNote, listShares, updateNote } from "@/lib/notes";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +26,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const user = await requireUser();
     requireSameOrigin(request);
     const { id } = await ctx.params;
-    const note = await updateNote(user, id, await request.json().catch(() => ({})));
+    const note = await updateNote(user, id, await readJson(request));
     return Response.json({ note });
   } catch (err) {
     return errorResponse(err);

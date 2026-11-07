@@ -193,6 +193,24 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
       await expect(n.shareNote(bob, other.id, { email: emails["nt-cleo"], permission: "read" })).resolves.toEqual({ shared: true });
     });
 
+    it("10 concurrent shares at 25 prior attempts let exactly 5 through", async () => {
+      const note = await mk(owner, "nt-race-share");
+      await sql`insert into rate_event (user_id, kind) select 'nt-owner', 'share' from generate_series(1, 25)`;
+      const results = await Promise.allSettled(
+        Array.from({ length: 10 }, (_, i) => n.shareNote(owner, note.id, { email: `ghost-${i}@notes-test.local`, permission: "read" })),
+      );
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(5);
+      for (const r of results) if (r.status === "rejected") expect(r.reason).toMatchObject({ status: 429 });
+    });
+
+    it("deletes this user's share attempts older than an hour, and nobody else's", async () => {
+      const note = await mk(owner, "nt-prune");
+      await sql`insert into rate_event (user_id, kind, at) values ('nt-owner', 'share', now() - interval '2 hours'), ('nt-bob', 'share', now() - interval '2 hours'), ('nt-owner', 'demo_load', now() - interval '2 hours')`;
+      await n.shareNote(owner, note.id, { email: emails["nt-bob"], permission: "read" });
+      const rows = await sql`select user_id, kind from rate_event where user_id in ('nt-owner','nt-bob') order by user_id, kind`;
+      expect(rows.map((r) => `${r.user_id}:${r.kind}`)).toEqual(["nt-bob:share", "nt-owner:demo_load", "nt-owner:share"]);
+    });
+
     it("attempts older than an hour don't count", async () => {
       const note = await mk(owner, "nt-window");
       for (let i = 0; i < 30; i++) {
@@ -210,6 +228,32 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
       expect(v2.updatedAt.getTime()).toBeGreaterThan(note.updatedAt.getTime());
       const v3 = await n.updateNote(owner, note.id, { title: "nt-fresh 3", updatedAt: v2.updatedAt.toISOString() });
       expect(v3.title).toBe("nt-fresh 3");
+    });
+
+    it("the token strictly advances on every write, including back-to-back ones", async () => {
+      const note = await mk(owner, "nt-advance");
+      let token = note.updatedAt;
+      for (let i = 0; i < 5; i++) {
+        const next = await n.updateNote(owner, note.id, { body: `v${i}`, updatedAt: token.toISOString() });
+        expect(next.updatedAt.getTime()).toBeGreaterThan(token.getTime());
+        // The token we just used is dead immediately, even in the same millisecond.
+        await expect(n.updateNote(owner, note.id, { body: "stale", updatedAt: token.toISOString() })).rejects.toMatchObject({ status: 409 });
+        token = next.updatedAt;
+      }
+      const vis = await n.setVisibility(owner, note.id, "workspace");
+      expect(vis.updatedAt.getTime()).toBeGreaterThan(token.getTime());
+      await expect(n.updateNote(owner, note.id, { body: "stale", updatedAt: token.toISOString() })).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("an edit-sharer can save a form that echoes the unchanged visibility", async () => {
+      const note = await mk(owner, "nt-echo", { visibility: "workspace" });
+      await n.shareNote(owner, note.id, { email: emails["nt-bob"], permission: "edit" });
+      const fresh = await n.getNote(bob, note.id);
+      const saved = await n.updateNote(bob, note.id, { title: "nt-echo 2", visibility: "workspace", updatedAt: fresh.updatedAt.toISOString() });
+      expect(saved).toMatchObject({ title: "nt-echo 2", visibility: "workspace" });
+      await expect(
+        n.updateNote(bob, note.id, { visibility: "private", updatedAt: saved.updatedAt.toISOString() }),
+      ).rejects.toMatchObject({ status: 403 });
     });
 
     it("returns 409 on a stale updatedAt and leaves the note unchanged", async () => {
@@ -248,6 +292,15 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
       await expect(mk(bob, "nt-bob-first")).resolves.toMatchObject({ title: "nt-bob-first" });
       await n.deleteNote(owner, (await n.listNotes(owner, "mine"))[0].id);
       await expect(mk(owner, "nt-after-delete")).resolves.toBeDefined();
+    });
+
+    it("10 concurrent creates at 99 notes let exactly one through", async () => {
+      await sql`insert into note (owner_id, title) select 'nt-owner', 'nt-race ' || g from generate_series(1, 99) g`;
+      const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => mk(owner, `nt-racer ${i}`)));
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      for (const r of results) if (r.status === "rejected") expect(r.reason).toMatchObject({ status: 409 });
+      const [{ c }] = await sql`select count(*)::int as c from note where owner_id = 'nt-owner'`;
+      expect(c).toBe(100);
     });
 
     it("validates input with zod (title, body size, visibility)", async () => {
@@ -333,6 +386,23 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
       expect(hits[0].snippet).toContain("zebracorn");
       await n.shareNote(bob, theirs.id, { email: emails["nt-owner"], permission: "read" });
       expect((await n.keywordSearch(owner, "zebracorn")).map((h) => h.noteId).sort()).toEqual([mine.id, theirs.id].sort());
+    });
+
+    it("treats _ and % in the title fallback as literals", async () => {
+      const lit = await mk(owner, "nt-und_erscore");
+      await mk(owner, "nt-undXerscore");
+      await mk(owner, "nt-pct 100%");
+      await mk(owner, "nt-pct 100x");
+      expect((await n.keywordSearch(owner, "und_erscore")).map((h) => h.noteId)).toEqual([lit.id]);
+      expect((await n.keywordSearch(owner, "100%")).map((h) => h.title)).toEqual(["nt-pct 100%"]);
+    });
+
+    it("returns the best-ranked notes first", async () => {
+      const weak = await mk(owner, "nt-rank weak");
+      const strong = await mk(owner, "nt-rank strong");
+      await addChunk(weak.id, "pelican " + "filler words here ".repeat(30));
+      await addChunk(strong.id, "pelican pelican pelican");
+      expect((await n.keywordSearch(owner, "pelican")).map((h) => h.noteId)).toEqual([strong.id, weak.id]);
     });
 
     it("falls back to a title match for notes with no chunks, and caps results at 20", async () => {

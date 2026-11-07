@@ -15,7 +15,7 @@ export class NotFoundError extends HttpError {
   }
 }
 
-/** The request is well formed but the current state forbids it (for example an illegal status move). */
+/** The request is well formed but conflicts with the current state (a stale update, a cap reached). */
 export class ConflictError extends HttpError {
   constructor(message = "That change isn't allowed from the current state.") {
     super(409, message);
@@ -28,26 +28,13 @@ export class BadRequestError extends HttpError {
   }
 }
 
-/** A machine endpoint whose secret isn't set. Always closed, never open. */
-export class NotConfiguredError extends HttpError {
-  constructor() {
-    super(503, "not configured");
-  }
-}
-
-export class UnauthorizedTokenError extends HttpError {
-  constructor() {
-    super(401, "Unauthorized");
-  }
-}
-
 export class PayloadTooLargeError extends HttpError {
   constructor(limit: number) {
     super(413, `Body too large (limit ${limit} bytes)`);
   }
 }
 
-/** Too soon to repeat this action (for example regenerating a summary). */
+/** Too many attempts in a window (for example share attempts per hour). */
 export class TooManyRequestsError extends HttpError {
   constructor(message = "Too many requests") {
     super(429, message);

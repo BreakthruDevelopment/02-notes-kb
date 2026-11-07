@@ -45,6 +45,30 @@ pnpm dev                             # http://localhost:3000
 To make yourself an admin: sign up, then `SEED_ADMIN_EMAIL=you@example.com SEED_ADMIN_PASSWORD=... pnpm db:seed`
 while the app is running.
 
+## Demo workspace
+
+`pnpm seed:demo` creates Ada (admin), Ben, Cleo, and Dev using Better Auth, then
+loads 20 indexed Markdown notes: 6 workspace, 8 private, and 6 shared read/edit.
+This includes the five-day PTO carry-over policy and an untrusted prompt-injection
+test note. Reloading replaces only the marked demo accounts' notes; other users'
+notes and shares remain intact.
+
+Export `DATABASE_URL`, `BETTER_AUTH_SECRET`, `APP_URL`, and `DEMO_PASSWORD` (10–128
+characters) in the shell before running `DEMO_SEED=yes pnpm seed:demo`. Set
+`AI_PROVIDER=demo` for deterministic offline indexing. The standalone CLI does not
+load `.env.local` automatically. It refuses without the explicit opt-in, on
+`app2.breakthruventures.ai`, or on any `*.azurecontainerapps.io` host. Never put
+passwords in the repository.
+
+For live demo loading, an authenticated admin can call the bodyless
+`POST /api/admin/demo` with the application's exact `Origin`. The route permits
+one attempt per minute per admin. It makes all four demo accounts normal users,
+rotates their passwords to unreported random values, and revokes old sessions,
+including sessions created by a prior CLI seed. The response reports
+`{ users, notes, indexed }`; when a live embedding provider fails or is capped,
+notes may remain pending for the existing reindex workflow. An unrelated account
+occupying a demo email causes a conflict instead of being overwritten.
+
 ## Design system
 
 Every app shares the Breakthru look (guide and concept: `ai-dev-os/design/`). Tokens live in `src/app/globals.css`

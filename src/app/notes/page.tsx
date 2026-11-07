@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageIntro, Panel } from "@/components/ui";
 import { requireUserOrRedirect } from "@/lib/auth/session";
 
 export const metadata: Metadata = { title: "Notes" };
@@ -8,9 +9,11 @@ export const dynamic = "force-dynamic";
 export default async function NotesPage() {
   await requireUserOrRedirect();
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Notes</h1>
-      <p className="text-sm text-muted">Your notes will appear here.</p>
-    </div>
+    <>
+      <PageIntro section="Notes" title="Notes" description="Write notes, search them, and ask questions of them." />
+      <Panel title="Your notes">
+        <p className="text-muted">Your notes will appear here.</p>
+      </Panel>
+    </>
   );
 }

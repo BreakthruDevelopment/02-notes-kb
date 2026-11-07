@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DemoBadge, PageIntro, Panel, StatusBadge, buttonPrimary, buttonSecondary } from "@/components/ui";
 
 const features = [
   { title: "Sign-in with roles", body: "Email and password out of the box, OIDC providers by config, admin and user roles enforced on the server." },
@@ -9,38 +10,40 @@ const features = [
 
 export default function Home() {
   return (
-    <div className="space-y-10">
-      <section className="space-y-4">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          A production-shaped starting point.
-        </h1>
-        <p className="max-w-2xl text-muted">
-          Each app in the portfolio starts from this template and adds its own domain and AI
-          feature. This one is a notes wiki you can ask questions of.
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <Link
-            href="/sign-in"
-            className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-accent-foreground"
-          >
-            Get started
-          </Link>
-          <Link
-            href="/api/health"
-            className="rounded-card border border-border px-4 py-2 text-sm font-medium"
-          >
-            Health check
-          </Link>
-        </div>
-      </section>
-      <section className="grid gap-4 sm:grid-cols-2">
+    <>
+      <PageIntro
+        section="Notes"
+        title="A notes wiki you can ask questions of."
+        description="Write notes, search them, and ask questions answered from what you wrote."
+        actions={
+          <>
+            <Link href="/notes" className={buttonPrimary}>
+              Open notes
+            </Link>
+            <Link href="/api/health" className={buttonSecondary}>
+              Health check
+            </Link>
+          </>
+        }
+      />
+      <div className="grid gap-x-4 sm:grid-cols-2">
         {features.map((f) => (
-          <div key={f.title} className="rounded-card border border-border bg-surface p-5">
-            <h2 className="font-medium">{f.title}</h2>
-            <p className="mt-1 text-sm text-muted">{f.body}</p>
-          </div>
+          <Panel key={f.title} title={f.title}>
+            <p className="text-muted">{f.body}</p>
+          </Panel>
         ))}
-      </section>
-    </div>
+      </div>
+      <Panel title="Status labels" action={<DemoBadge />}>
+        <p className="mb-3 text-muted">
+          The shared badges used across the portfolio. Not started is neutral, never an error.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <StatusBadge status="live" />
+          <StatusBadge status="building" />
+          <StatusBadge status="blocked" />
+          <StatusBadge status="not-started" />
+        </div>
+      </Panel>
+    </>
   );
 }

@@ -20,6 +20,23 @@ describe("demo CLI guards", () => {
   it.each(["https://app2.breakthruventures.ai", "https://APP2.BREAKTHRUVENTURES.AI.:443/path", "https://notes.env.eastus.azurecontainerapps.io", "https://azurecontainerapps.io"])("refuses production URL %s", (APP_URL) => {
     expect(() => demoSeedConfig({ ...base, APP_URL })).toThrow("production host");
   });
+  it("refuses a missing or invalid APP_URL with a readable message", () => {
+    for (const APP_URL of [undefined, "not a url"]) {
+      expect(() => demoSeedConfig({ ...base, APP_URL })).toThrow(/^Demo seed refused: /);
+    }
+  });
+  it("refuses a production host with several trailing dots", () => {
+    expect(() => demoSeedConfig({ ...base, APP_URL: "https://app2.breakthruventures.ai.." })).toThrow("production host");
+  });
+  it("refuses an Azure database host", () => {
+    for (const DATABASE_URL of ["postgres://u:p@notes.postgres.database.azure.com:5432/db", "postgres://u:p@NOTES.postgres.database.azure.com./db"]) {
+      expect(() => demoSeedConfig({ ...base, DATABASE_URL })).toThrow("production database");
+    }
+    expect(() => demoSeedConfig({ ...base, DATABASE_URL: "postgres://u:p@localhost:5432/db" })).not.toThrow();
+  });
+  it("allows a lookalike host that only contains the production name", () => {
+    expect(demoSeedConfig({ ...base, APP_URL: "https://app2.breakthruventures.ai.evil.com" }).appUrl).toContain("evil.com");
+  });
   it("accepts a local or staging URL with an explicit password", () => {
     expect(demoSeedConfig(base).password).toBe(base.DEMO_PASSWORD);
     expect(demoSeedConfig({ ...base, APP_URL: "https://notes.staging.example.com" }).appUrl).toContain("staging");
@@ -52,9 +69,9 @@ describe.skipIf(!url)("demo workspace (Postgres + Better Auth)", () => {
   const req = (origin = "http://localhost:3000") => new Request("http://localhost:3000/api/admin/demo", { method: "POST", headers: { origin } });
 
   async function clean() {
-    await sql`delete from "user" where email in ${sql(demoEmails)}`;
+    await sql`delete from "user" where email in ${sql(demoEmails)} or email like 'dm-signup-%'`;
     await sql`delete from note where owner_id in ('dm-real', 'dm-admin')`;
-    await sql`delete from rate_event where user_id in ('dm-real', 'dm-admin')`;
+    await sql`delete from rate_event where user_id in ('dm-real', 'dm-admin', 'dm-admin2') or kind = 'demo_load'`;
   }
   beforeAll(async () => {
     Object.assign(process.env, base, { DATABASE_URL: url, BETTER_AUTH_SECRET: "demo-integration-secret-32-characters", AI_PROVIDER: "demo", LOG_LEVEL: "error" });
@@ -164,9 +181,47 @@ describe.skipIf(!url)("demo workspace (Postgres + Better Auth)", () => {
     await sql`update rate_event set at = now() - interval '61 seconds' where user_id = ${actor.id} and kind = 'demo_load'`;
     await loader.reserveDemoLoad(actor);
     await sql`update "user" set role = 'admin' where id = ${real.id}`;
-    await loader.reserveDemoLoad({ ...real, role: "admin" });
+    await expect(loader.reserveDemoLoad({ ...real, role: "admin" })).rejects.toMatchObject({ status: 429 });
     await expect(loader.reserveDemoLoad(real)).rejects.toMatchObject({ status: 403 });
+    await sql`update "user" set role = 'user' where id = ${real.id}`;
   });
+
+  it("survives 16 consecutive loads (share rate events reset) with exactly 20 notes", async () => {
+    for (let i = 0; i < 16; i++) await loader.loadDemoWorkspace(actor, { mode: "cli" });
+    expect(await snapshot()).toHaveLength(20);
+  }, 120000);
+
+  it("serializes concurrent loads", async () => {
+    await Promise.all([loader.loadDemoWorkspace(actor, { mode: "cli" }), loader.loadDemoWorkspace(actor, { mode: "cli" })]);
+    expect(await snapshot()).toHaveLength(20);
+  }, 60000);
+
+  it("public sign-up and profile update cannot claim a demo email or the marker, while the loader still works", async () => {
+    const signUp = (payload: Record<string, unknown>) => api.handler(new Request("http://localhost:3000/api/auth/sign-up/email", {
+      method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+      body: JSON.stringify({ name: "Mallory", password: base.DEMO_PASSWORD, ...payload }),
+    }));
+    expect((await signUp({ email: "mallory@demo.breakthru.test" })).status).toBe(400);
+    expect((await signUp({ email: "dm-signup-marker@test.local", image: "urn:breakthru:notes-demo:v1" })).status).toBe(400);
+    expect(await sql`select 1 from "user" where email in ('mallory@demo.breakthru.test', 'dm-signup-marker@test.local')`).toHaveLength(0);
+    expect((await signUp({ email: "dm-signup-ok@test.local" })).status).toBe(200);
+    // Profile update: an existing real user cannot adopt the marker over HTTP.
+    const cookie = (await signUp({ email: "dm-signup-two@test.local" })).headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const update = await api.handler(new Request("http://localhost:3000/api/auth/update-user", {
+      method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json", cookie },
+      body: JSON.stringify({ image: "urn:breakthru:notes-demo:v1" }),
+    }));
+    expect(update.status).toBe(400);
+    expect(await sql`select 1 from "user" where email = 'dm-signup-two@test.local' and image is not null`).toHaveLength(0);
+    expect(await loader.loadDemoWorkspace(actor, { mode: "cli" })).toEqual({ users: 4, notes: 20, indexed: 20 });
+  }, 30000);
+
+  it("keeps Cleo's launch note hidden from Ben until she shares it", async () => {
+    await loader.loadDemoWorkspace(actor, { mode: "cli" });
+    const [{ id: benId }] = await sql`select id from "user" where email = 'ben@demo.breakthru.test'`;
+    const [{ id: noteId }] = await sql`select n.id from note n join "user" u on u.id = n.owner_id where u.email = 'cleo@demo.breakthru.test' and n.body like '%October 14%'`;
+    await expect(notes.getNote({ id: benId, role: "user" }, noteId)).rejects.toMatchObject({ status: 404 });
+  }, 30000);
 
   it("refuses to adopt an unrelated account at a demo address", async () => {
     const collision = await api.api.createUser({ body: { email: "ada@demo.breakthru.test", name: "Real Ada", password: base.DEMO_PASSWORD } });

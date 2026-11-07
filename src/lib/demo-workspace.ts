@@ -1,18 +1,18 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { and, count, eq, gt, sql } from "drizzle-orm";
+import { and, count, eq, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { type Actor, assertCan } from "@/lib/auth/rbac";
 import { db, schema } from "@/lib/db";
+import { DEMO_EMAIL_DOMAIN, MARKER } from "@/lib/demo-identity";
 import { demoSeedConfig } from "@/lib/demo-seed-config";
 import { ConflictError, TooManyRequestsError } from "@/lib/errors";
-import { createNote, deleteNote, listNotes, setVisibility, shareNote } from "@/lib/notes";
+import { createNote, deleteNote, listNotes, shareNote } from "@/lib/notes";
 
-const MARKER = "urn:breakthru:notes-demo:v1";
 const PEOPLE = ["Ada", "Ben", "Cleo", "Dev"] as const;
 type Person = (typeof PEOPLE)[number];
-const emailFor = (name: Person) => `${name.toLowerCase()}@demo.breakthru.test`;
+const emailFor = (name: Person) => `${name.toLowerCase()}@${DEMO_EMAIL_DOMAIN}`;
 const optionsSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("admin") }).strict(),
   z.object({ mode: z.literal("cli") }).strict(),
@@ -30,7 +30,7 @@ const NOTES: DemoNote[] = [
   { owner: "Ada", title: "Ada: personal todos", body: "# Personal todos\n\n- Prepare the quarterly planning agenda.\n- Book a mentoring session." },
   { owner: "Ben", title: "Ben: 1:1 with Ada", body: "# Private 1:1\n\nPractice writing smaller pull requests. Ask for feedback on the search prototype." },
   { owner: "Ben", title: "Ben: customer call", body: "# Fictional customer call\n\nNorthstar Demo wants keyboard shortcuts and clearer sharing controls. No real customer data is recorded here." },
-  { owner: "Cleo", title: "Cleo: 1:1 preparation", body: "# Private preparation\n\nReview design feedback and bring two examples of improved onboarding copy." },
+  { owner: "Cleo", title: "Cleo: Q3 launch planning", body: "# Private planning\n\nQ3 launch date moved to October 14. Hold the announcement until the access-control review is signed off, then tell the team." },
   { owner: "Cleo", title: "Cleo: personal todos", body: "# Personal todos\n\n- Sketch the settings page.\n- Schedule a usability session.\n- Review the color palette." },
   { owner: "Dev", title: "Dev: 1:1 preparation", body: "# Private preparation\n\nDiscuss the on-call rotation and training needs with Ada." },
   { owner: "Dev", title: "Dev: personal todos", body: "# Personal todos\n\n- Rehearse the rollback procedure.\n- Finish the database performance course." },
@@ -42,16 +42,19 @@ const NOTES: DemoNote[] = [
   { owner: "Dev", title: "Operations handoff", body: "# Operations handoff\n\nCheck health before investigating search failures. Escalate database connection errors to the on-call engineer.", share: { with: "Ben", permission: "read" } },
 ];
 
-/** Atomic per-admin reservation; concurrent requests cannot both pass. */
+/** One constant key serializes every demo load and reservation across processes. */
+const LOCK = sql`pg_advisory_xact_lock(hashtextextended(${"demo-load"}, 0))`;
+
+/** Atomic global reservation (one load per minute for the whole app); concurrent requests cannot both pass. */
 export async function reserveDemoLoad(actor: Actor): Promise<void> {
   assertCan(actor, "delete"); // no resource: admin only
   const { rateEvent } = schema;
   await db().transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"demo-load:" + actor.id}, 0))`);
-    const own = and(eq(rateEvent.userId, actor.id), eq(rateEvent.kind, "demo_load"));
-    await tx.delete(rateEvent).where(and(own, sql`${rateEvent.at} <= now() - interval '1 minute'`));
+    await tx.execute(sql`select ${LOCK}`);
+    const any = eq(rateEvent.kind, "demo_load");
+    await tx.delete(rateEvent).where(and(any, sql`${rateEvent.at} <= now() - interval '1 minute'`));
     const [{ n }] = await tx.select({ n: count() }).from(rateEvent)
-      .where(and(own, gt(rateEvent.at, sql`now() - interval '1 minute'`)));
+      .where(and(any, gt(rateEvent.at, sql`now() - interval '1 minute'`)));
     if (n) throw new TooManyRequestsError("Demo workspace can be loaded once per minute. Try again shortly.");
     await tx.insert(rateEvent).values({ userId: actor.id, kind: "demo_load" });
   });
@@ -60,7 +63,16 @@ export async function reserveDemoLoad(actor: Actor): Promise<void> {
 /** Default is the safe admin-route mode. CLI mode independently rechecks all guards. */
 export async function loadDemoWorkspace(actor: Actor, options: unknown = { mode: "admin" }) {
   assertCan(actor, "delete");
-  const { mode } = optionsSchema.parse(options);
+  const parsed = optionsSchema.parse(options);
+  // Hold the lock on a dedicated transaction for the whole load so the CLI and the
+  // route cannot interleave. The work itself uses the normal pool.
+  return db().transaction(async (tx) => {
+    await tx.execute(sql`select ${LOCK}`);
+    return loadLocked(actor, parsed.mode);
+  });
+}
+
+async function loadLocked(actor: Actor, mode: "admin" | "cli") {
   const password = mode === "cli" ? demoSeedConfig().password : undefined;
   const api = auth();
   const ctx = await api.$context;
@@ -94,6 +106,13 @@ export async function loadDemoWorkspace(actor: Actor, options: unknown = { mode:
     people.set(name, { id, role });
   }
 
+  // Demo users' shares count toward the hourly share limit and their ids persist, so
+  // clear only their share events or repeated reloads would hit 429 mid-load.
+  await db().delete(schema.rateEvent).where(and(
+    eq(schema.rateEvent.kind, "share"),
+    inArray(schema.rateEvent.userId, [...people.values()].map((p) => p.id)),
+  ));
+
   // The owners perform all note operations through the same ACL/indexing layer as
   // normal requests. Never delete by title, a broad email suffix, or a SQL predicate.
   for (const person of people.values()) {
@@ -102,8 +121,7 @@ export async function loadDemoWorkspace(actor: Actor, options: unknown = { mode:
   let indexed = 0;
   for (const fixture of NOTES) {
     const owner = people.get(fixture.owner)!;
-    const note = await createNote(owner, { title: fixture.title, body: fixture.body });
-    if (fixture.workspace) await setVisibility(owner, note.id, "workspace");
+    const note = await createNote(owner, { title: fixture.title, body: fixture.body, visibility: fixture.workspace ? "workspace" : "private" });
     if (fixture.share) await shareNote(owner, note.id, { email: emailFor(fixture.share.with), permission: fixture.share.permission });
     // createNote invokes reindexNote and returns the resulting index status.
     if (note.indexStatus === "ready") indexed += 1;

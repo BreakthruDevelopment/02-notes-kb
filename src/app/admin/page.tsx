@@ -1,5 +1,6 @@
 import { desc } from "drizzle-orm";
 import type { Metadata } from "next";
+import { type Column, DataList, PageIntro, Panel, StatGrid, StatTile } from "@/components/ui";
 import { requireRoleOrRedirect } from "@/lib/auth/session";
 import { db, schema } from "@/lib/db";
 
@@ -20,31 +21,33 @@ export default async function AdminPage() {
     .orderBy(desc(schema.user.createdAt))
     .limit(100);
 
+  type Row = (typeof users)[number];
+  const columns: Column<Row>[] = [
+    { key: "name", header: "Name", primary: true, cell: (u) => u.name },
+    { key: "email", header: "Email", className: "break-all", cell: (u) => <span className="break-all">{u.email}</span> },
+    {
+      key: "role",
+      header: "Role",
+      cell: (u) => (u.role === "admin" ? <span className="inline-flex rounded-md bg-accent-soft px-2 py-0.5 text-sm font-medium text-accent">Admin</span> : "User"),
+    },
+    {
+      key: "joined",
+      header: "Joined",
+      className: "whitespace-nowrap",
+      cell: (u) => u.createdAt.toISOString().slice(0, 10),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-      <div className="overflow-x-auto rounded-card border border-border bg-surface">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-border text-muted">
-            <tr>
-              <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-4 py-2 font-medium">Email</th>
-              <th className="px-4 py-2 font-medium">Role</th>
-              <th className="px-4 py-2 font-medium">Joined</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td className="px-4 py-2">{u.name}</td>
-                <td className="px-4 py-2">{u.email}</td>
-                <td className="px-4 py-2">{u.role}</td>
-                <td className="px-4 py-2 whitespace-nowrap">{u.createdAt.toISOString().slice(0, 10)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <>
+      <PageIntro section="Admin" title="Users" description="Everyone who has signed up, newest first." />
+      <StatGrid>
+        <StatTile value={users.length} label="Users" tone="accent" />
+        <StatTile value={users.filter((u) => u.role === "admin").length} label="Admins" />
+      </StatGrid>
+      <Panel title="All users" count={users.length}>
+        <DataList caption="Users" rows={users} rowKey={(u) => u.id} columns={columns} empty="No users yet." />
+      </Panel>
+    </>
   );
 }

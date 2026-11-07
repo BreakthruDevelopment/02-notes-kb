@@ -1,5 +1,5 @@
 {
-  "id": "54732546-73c2-498a-b126-9752d2f956e7",
+  "id": "f7e616c1-c1f5-421f-9488-31fbaf53c447",
   "prevId": "d6c78756-8648-4665-b84e-c7bb3b0420bc",
   "version": "7",
   "dialect": "postgresql",
@@ -164,7 +164,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "ai_usage_kind_chk": {
+          "name": "ai_usage_kind_chk",
+          "value": "\"ai_usage\".\"kind\" in ('embed','ask')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.ask_event": {
@@ -253,7 +258,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "ask_event_mode_chk": {
+          "name": "ask_event_mode_chk",
+          "value": "\"ask_event\".\"mode\" in ('vector','keyword','demo')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.note": {
@@ -302,14 +312,14 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp with time zone",
+          "type": "timestamp (3) with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp with time zone",
+          "type": "timestamp (3) with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
@@ -369,6 +379,14 @@
         "note_title_len": {
           "name": "note_title_len",
           "value": "char_length(\"note\".\"title\") between 1 and 200"
+        },
+        "note_visibility_chk": {
+          "name": "note_visibility_chk",
+          "value": "\"note\".\"visibility\" in ('private','workspace')"
+        },
+        "note_index_status_chk": {
+          "name": "note_index_status_chk",
+          "value": "\"note\".\"index_status\" in ('ready','pending')"
         },
         "note_body_len": {
           "name": "note_body_len",
@@ -505,6 +523,10 @@
         "note_chunk_content_len": {
           "name": "note_chunk_content_len",
           "value": "char_length(\"note_chunk\".\"content\") <= 1500"
+        },
+        "note_chunk_search_text_len": {
+          "name": "note_chunk_search_text_len",
+          "value": "char_length(\"note_chunk\".\"search_text\") <= 1710"
         }
       },
       "isRLSEnabled": false
@@ -596,7 +618,98 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "note_share_permission_chk": {
+          "name": "note_share_permission_chk",
+          "value": "\"note_share\".\"permission\" in ('read','edit')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.rate_event": {
+      "name": "rate_event",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "at": {
+          "name": "at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "rate_event_user_kind_at_idx": {
+          "name": "rate_event_user_kind_at_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "rate_event_user_id_user_id_fk": {
+          "name": "rate_event_user_id_user_id_fk",
+          "tableFrom": "rate_event",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "rate_event_kind_chk": {
+          "name": "rate_event_kind_chk",
+          "value": "\"rate_event\".\"kind\" in ('share','demo_load')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.session": {

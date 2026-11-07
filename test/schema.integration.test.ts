@@ -4,9 +4,11 @@
  * where the extension already exists, without touching the shared test database.
  */
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import * as schema from "@/lib/db/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -150,5 +152,52 @@ describe.skipIf(!url)("notes schema (Postgres + pgvector)", () => {
     expect(await sql`select 1 from ask_event where user_id = 's-bob'`).toHaveLength(0);
     // Alice's note survives.
     expect(await sql`select 1 from note where id = ${aliceNote}`).toHaveLength(1);
+  });
+
+  it("round-trips note.updated_at through a JS Date so optimistic concurrency can match it", async () => {
+    const d = drizzle(sql, { schema });
+    const [row] = await d
+      .insert(schema.note)
+      .values({ ownerId: "s-alice", title: "occ", body: "b" })
+      .returning();
+    const found = await d.select().from(schema.note).where(eq(schema.note.updatedAt, row.updatedAt));
+    expect(found.map((n) => n.id)).toContain(row.id);
+    const [read] = await d.select().from(schema.note).where(eq(schema.note.id, row.id));
+    const hit = await d
+      .select()
+      .from(schema.note)
+      .where(eq(schema.note.updatedAt, new Date(read.updatedAt.getTime())));
+    expect(hit).toHaveLength(1);
+  });
+
+  it("rejects values outside the enum-like columns", async () => {
+    const id = await makeNote("s-alice");
+    await expect(sql`update note set visibility = 'public' where id = ${id}`).rejects.toMatchObject({ code: "23514" });
+    await expect(sql`update note set index_status = 'done' where id = ${id}`).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      sql`insert into note_share (note_id, user_id, permission) values (${id}, 's-bob', 'admin')`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(sql`insert into ai_usage (day, kind, count) values (current_date, 'x', 1)`).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      sql`insert into ask_event (user_id, mode) values ('s-alice', 'magic')`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      sql`insert into rate_event (user_id, kind) values ('s-alice', 'other')`,
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("stores rate events and removes them with the user", async () => {
+    await sql`insert into "user" (id, name, email) values ('s-carl', 'c', 's-carl@test.local')`;
+    await sql`insert into rate_event (user_id, kind) values ('s-carl', 'share'), ('s-carl', 'demo_load')`;
+    expect(await sql`select 1 from rate_event where user_id = 's-carl'`).toHaveLength(2);
+    await sql`delete from "user" where id = 's-carl'`;
+    expect(await sql`select 1 from rate_event where user_id = 's-carl'`).toHaveLength(0);
+  });
+
+  it("limits search_text to 1710 characters", async () => {
+    const id = await makeNote("s-alice");
+    await expect(
+      sql`insert into note_chunk (note_id, ord, content, content_hash, search_text) values (${id}, 0, 'x', 'h', ${"x".repeat(1711)})`,
+    ).rejects.toMatchObject({ code: "23514" });
   });
 });

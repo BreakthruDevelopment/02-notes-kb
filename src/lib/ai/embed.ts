@@ -3,7 +3,9 @@ import { log } from "@/lib/log";
 import { geminiEmbed } from "./providers";
 import { AiError, type EmbedRequest, type EmbedResult } from "./types";
 
-export const EMBED_DIMS = 768;
+import { EMBED_DIMS } from "./constants";
+
+export { EMBED_DIMS };
 export const EMBED_MAX_TEXTS = 32;
 export const EMBED_MAX_CHARS = 8_000;
 export const EMBED_MAX_TOTAL_CHARS = 64_000;

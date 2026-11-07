@@ -14,6 +14,7 @@ import {
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
+import { EMBED_DIMS } from "@/lib/ai/constants";
 
 // ---------------------------------------------------------------------------
 // Auth tables (shape required by Better Auth with the admin plugin).
@@ -94,8 +95,6 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
-export const EMBED_DIMS = 768;
-
 export const note = pgTable(
   "note",
   {
@@ -111,13 +110,15 @@ export const note = pgTable(
     indexStatus: text("index_status", { enum: ["ready", "pending"] })
       .notNull()
       .default("pending"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 3 }).notNull().defaultNow(),
   },
   (t) => [
     index("note_owner_id_idx").on(t.ownerId),
     index("note_visibility_idx").on(t.visibility),
     check("note_title_len", sql`char_length(${t.title}) between 1 and 200`),
+    check("note_visibility_chk", sql`${t.visibility} in ('private','workspace')`),
+    check("note_index_status_chk", sql`${t.indexStatus} in ('ready','pending')`),
     check("note_body_len", sql`char_length(${t.body}) <= 20000`),
   ],
 );
@@ -136,7 +137,11 @@ export const noteShare = pgTable(
       .default("read"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.noteId, t.userId] }), index("note_share_user_id_idx").on(t.userId)],
+  (t) => [
+    primaryKey({ columns: [t.noteId, t.userId] }),
+    index("note_share_user_id_idx").on(t.userId),
+    check("note_share_permission_chk", sql`${t.permission} in ('read','edit')`),
+  ],
 );
 
 export const noteChunk = pgTable(
@@ -160,6 +165,7 @@ export const noteChunk = pgTable(
   (t) => [
     unique("note_chunk_note_ord_uq").on(t.noteId, t.ord),
     check("note_chunk_content_len", sql`char_length(${t.content}) <= 1500`),
+    check("note_chunk_search_text_len", sql`char_length(${t.searchText}) <= 1710`),
     index("note_chunk_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     index("note_chunk_tsv_gin_idx").using("gin", t.tsv),
   ],
@@ -172,7 +178,10 @@ export const aiUsage = pgTable(
     kind: text("kind", { enum: ["embed", "ask"] }).notNull(),
     count: integer("count").notNull().default(0),
   },
-  (t) => [primaryKey({ columns: [t.day, t.kind] })],
+  (t) => [
+    primaryKey({ columns: [t.day, t.kind] }),
+    check("ai_usage_kind_chk", sql`${t.kind} in ('embed','ask')`),
+  ],
 );
 
 export const askEvent = pgTable(
@@ -188,10 +197,33 @@ export const askEvent = pgTable(
     refused: boolean("refused").notNull().default(false),
   },
   // No question text is stored.
-  (t) => [index("ask_event_user_at_idx").on(t.userId, t.at)],
+  (t) => [
+    index("ask_event_user_at_idx").on(t.userId, t.at),
+    check("ask_event_mode_chk", sql`${t.mode} in ('vector','keyword','demo')`),
+  ],
+);
+
+/** Rate-limit ledger: one row per attempt, counted over a sliding window. */
+export const rateEvent = pgTable(
+  "rate_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["share", "demo_load"] }).notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("rate_event_user_kind_at_idx").on(t.userId, t.kind, t.at),
+    check("rate_event_kind_chk", sql`${t.kind} in ('share','demo_load')`),
+  ],
 );
 
 export type User = typeof user.$inferSelect;
 export type Note = typeof note.$inferSelect;
 export type NoteShare = typeof noteShare.$inferSelect;
 export type NoteChunk = typeof noteChunk.$inferSelect;
+export type AiUsage = typeof aiUsage.$inferSelect;
+export type AskEvent = typeof askEvent.$inferSelect;
+export type RateEvent = typeof rateEvent.$inferSelect;

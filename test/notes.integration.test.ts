@@ -26,7 +26,9 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
 
   async function addChunk(noteId: string, content: string, ord = 0) {
     await sql`insert into note_chunk (note_id, ord, content, content_hash, search_text)
-      values (${noteId}, ${ord}, ${content}, ${"h" + ord + noteId}, ${content})`;
+      values (${noteId}, ${ord}, ${content}, ${"h" + ord + noteId}, ${content})
+      on conflict (note_id, ord) do update set content = excluded.content, content_hash = excluded.content_hash,
+        search_text = excluded.search_text, embedding = null, embedding_model = null`;
   }
 
   async function wipe() {
@@ -274,14 +276,14 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
       await expect(n.updateNote(bob, note.id, { body: "late", updatedAt: note.updatedAt.toISOString() })).rejects.toMatchObject({ status: 404 });
     });
 
-    it("content changes mark the note pending; a visibility-only change leaves the index status", async () => {
+    it("a visibility-only change leaves the index status; a content change re-indexes and reports the final status", async () => {
       const note = await mk(owner, "nt-pending");
       await sql`update note set index_status = 'ready' where id = ${note.id}`;
       const fresh = await n.getNote(owner, note.id);
       const vis = await n.updateNote(owner, note.id, { visibility: "workspace", updatedAt: fresh.updatedAt.toISOString() });
       expect(vis.indexStatus).toBe("ready");
       const body = await n.updateNote(owner, note.id, { body: "changed", updatedAt: vis.updatedAt.toISOString() });
-      expect(body.indexStatus).toBe("pending");
+      expect(body.indexStatus).toBe("ready"); // indexed inline (demo embeddings); the response reflects it
     });
   });
 
@@ -414,13 +416,6 @@ describe.skipIf(!url)("notes data layer (Postgres)", () => {
       const again = await n.keywordSearch(owner, "nt-fallback chunked");
       // A note that has chunks is found by its content, not by the title fallback.
       expect(again.map((h) => h.noteId)).not.toContain(chunked.id);
-    });
-  });
-
-  describe("indexing hook", () => {
-    it("the default reindexNote hook is a no-op that resolves", async () => {
-      const indexing = await import("@/lib/indexing");
-      expect(await indexing.reindexNote({} as never)).toBeUndefined();
     });
   });
 });

@@ -95,8 +95,12 @@ export function orQuery(question: string): string | null {
   return words.length ? words.join(" | ") : null;
 }
 
-/** Keyword fallback: top chunks by full-text rank among chunks the actor can read. */
-export async function keywordChunks(actorId: string, question: string): Promise<SourceChunk[]> {
+/**
+ * Keyword fallback: top chunks by full-text rank among chunks the actor can read. With `unsearchableBy`, only chunks
+ * that vector search could not compare with that model (no vector, or another model) are considered: chunks it could
+ * compare were already judged too far away, and keywords must not overrule that.
+ */
+export async function keywordChunks(actorId: string, question: string, unsearchableBy?: string): Promise<SourceChunk[]> {
   const terms = orQuery(question);
   if (!terms) return [];
   const tsq = sql`to_tsquery('english', ${terms})`;
@@ -105,6 +109,7 @@ export async function keywordChunks(actorId: string, question: string): Promise<
     from ${noteChunk}
     inner join ${note} on ${note.id} = ${noteChunk.noteId}
     where ${readableBy(actorId)} and ${noteChunk.tsv} @@ ${tsq}
+      ${unsearchableBy ? sql`and (${noteChunk.embedding} is null or ${noteChunk.embeddingModel} is distinct from ${unsearchableBy})` : sql``}
     order by ts_rank(${noteChunk.tsv}, ${tsq}) desc, ${note.id}, ${noteChunk.ord}
     limit ${RAG_TOP_K}
   `);

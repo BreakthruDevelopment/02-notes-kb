@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, eq, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { DEMO_EMBED_MODEL, embed, liveEmbedModel } from "@/lib/ai";
 import { chunkMarkdown, searchText } from "@/lib/chunker";
 import { db, schema } from "@/lib/db";
@@ -62,25 +62,28 @@ export async function indexNote(n: Pick<Note, "id" | "title" | "body" | "updated
   });
 
   // Embed in batches of 32 within the daily cap. Anything not embedded is written without a vector.
+  // Demo embeddings are free, so they are neither capped nor counted.
+  const metered = model !== DEMO_EMBED_MODEL;
   const vectors = new Map<number, { vector: number[]; model: string }>();
   let capped = false;
   for (let i = 0; i < stale.length; i += EMBED_BATCH) {
     const batch = stale.slice(i, i + EMBED_BATCH);
-    if (!(await reserveUsage("embed", batch.length, env().EMBED_DAILY_CHUNKS))) {
+    if (metered && !(await reserveUsage("embed", batch.length, env().EMBED_DAILY_CHUNKS))) {
       capped = true;
       log.warn("index.embed_cap_reached", { noteId: n.id, chunks: batch.length });
       break;
     }
+    let res: Awaited<ReturnType<typeof embed>>;
     try {
-      const res = await embed({ task: "embed-note", texts: batch.map((c) => c.searchText), kind: "document" });
-      // The free demo provider costs nothing, so it doesn't use up the live budget.
-      if (res.demo) await refundUsage("embed", batch.length);
-      batch.forEach((c, k) => vectors.set(c.ord, { vector: res.vectors[k], model: res.model }));
+      res = await embed({ task: "embed-note", texts: batch.map((c) => c.searchText), kind: "document" });
     } catch (err) {
-      await refundUsage("embed", batch.length).catch(() => undefined);
+      if (metered) await refundUsage("embed", batch.length).catch(() => undefined);
       log.warn("index.embed_failed", { noteId: n.id, chunks: batch.length, error: err instanceof Error ? err.message : String(err) });
       break;
     }
+    // The gateway fell back to the free demo provider: nothing was spent, so give the reservation back.
+    if (metered && res.demo) await refundUsage("embed", batch.length).catch(() => undefined);
+    batch.forEach((c, k) => vectors.set(c.ord, { vector: res.vectors[k], model: res.model }));
   }
 
   return db().transaction(async (tx) => {
@@ -137,40 +140,65 @@ export async function indexNote(n: Pick<Note, "id" | "title" | "body" | "updated
 /**
  * Hook called after a note is created or its title/body changes, once the write has committed.
  * Never throws into the request path: on any failure the note stays `pending`, findable by keyword.
+ * Returns the note's index status afterwards, so the caller's response can reflect it.
  */
-export async function reindexNote(n: Note): Promise<void> {
+export async function reindexNote(n: Note): Promise<Note["indexStatus"]> {
   try {
-    await indexNote(n);
+    const r = await indexNote(n);
+    return r.status === "ready" ? "ready" : "pending";
   } catch (err) {
     log.warn("index.failed", { noteId: n.id, error: err instanceof Error ? err.message : String(err) });
+    return "pending";
   }
 }
 
 const REINDEX_NOTES_PER_BATCH = 5;
 /** Stop starting new batches after this long, so the request finishes inside the platform timeout. */
 const REINDEX_BUDGET_MS = 15_000;
+/** And stop after about this many chunks per call (one call = one admin click on a small instance). */
+export const REINDEX_MAX_CHUNKS = 50;
 
-/** Admin: reindex pending notes in small batches within a time budget. */
+/**
+ * Notes that need work: marked pending, or holding any chunk without a vector for the current model (for example
+ * notes embedded in demo mode, once a Gemini key is added).
+ */
+function needsIndexing(model: string): SQL {
+  return or(
+    eq(note.indexStatus, "pending"),
+    sql`exists (select 1 from ${noteChunk} where ${noteChunk.noteId} = ${note.id} and (${noteChunk.embedding} is null or ${noteChunk.embeddingModel} is distinct from ${model}))`,
+  ) as SQL;
+}
+
+/** Admin: reindex notes that need it in small batches, within a time budget and a chunk budget. */
 export async function reindexPending(budgetMs = REINDEX_BUDGET_MS): Promise<{ processed: number; remaining: number }> {
   const started = Date.now();
+  const model = expectedEmbedModel();
   const seen: string[] = [];
   let processed = 0;
-  let capped = false;
-  while (!capped && Date.now() - started < budgetMs) {
+  let chunks = 0;
+  let stop = false;
+  while (!stop && Date.now() - started < budgetMs) {
     const batch = await db()
       .select({ id: note.id, title: note.title, body: note.body, updatedAt: note.updatedAt })
       .from(note)
-      .where(and(eq(note.indexStatus, "pending"), seen.length ? notInArray(note.id, seen) : undefined))
+      .where(and(needsIndexing(model), seen.length ? notInArray(note.id, seen) : undefined))
       .orderBy(asc(note.updatedAt))
       .limit(REINDEX_NOTES_PER_BATCH);
     if (batch.length === 0) break;
     for (const n of batch) {
+      // chunkMarkdown is an upper bound on what this note can embed; always do at least one note per call.
+      const size = chunkMarkdown(n.body).length;
+      if (processed > 0 && chunks + size > REINDEX_MAX_CHUNKS) {
+        stop = true;
+        break;
+      }
       seen.push(n.id);
       try {
         const r = await indexNote(n);
         processed += 1;
+        chunks += size;
         if (r.capped) {
-          capped = true;
+          stop = true;
           break;
         }
       } catch (err) {
@@ -181,6 +209,6 @@ export async function reindexPending(budgetMs = REINDEX_BUDGET_MS): Promise<{ pr
   const [{ remaining }] = await db()
     .select({ remaining: sql<number>`count(*)` })
     .from(note)
-    .where(eq(note.indexStatus, "pending"));
+    .where(needsIndexing(model));
   return { processed, remaining: Number(remaining) };
 }

@@ -8,7 +8,12 @@
  */
 export const CHUNK_MAX = 1200;
 export const CHUNK_OVERLAP = 150;
-/** A heading starts a new chunk only when the current chunk has at least this much text. */
+/**
+ * A heading starts a new chunk only when the current chunk already has at least this much text. Below it the
+ * heading and its text join the previous chunk: a note with many short sections would otherwise become dozens of
+ * tiny chunks (more embedding calls, more noise in the top 6), and a short chunk carries too little context to
+ * match a question. 600 is half of CHUNK_MAX, so a section boundary is honored whenever a chunk is at least half full.
+ */
 const HEADING_FLUSH_MIN = 600;
 const SEPARATOR = "\n\n";
 

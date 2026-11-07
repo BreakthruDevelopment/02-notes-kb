@@ -33,6 +33,31 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
     sql`insert into ai_usage (day, kind, count) values ((now() at time zone 'utc')::date, ${kind}, ${count})
       on conflict (day, kind) do update set count = ${count}`;
 
+  let realEmbed: typeof import("@/lib/ai").embed;
+  let resetEnvCache: () => void;
+  const liveResult = (req: { texts: string[] }, demo = false) => ({
+    vectors: req.texts.map((t) => embedMod.demoVector(t)),
+    provider: demo ? "demo" : "gemini",
+    model: demo ? embedMod.DEMO_EMBED_MODEL : "gemini-embedding-2",
+    dims: 768,
+    demo,
+    latencyMs: 1,
+  });
+  /** A Gemini key is configured: indexing is metered, vectors carry the live model name (computed offline). */
+  const useLive = () => {
+    process.env.AI_PROVIDER = "gemini";
+    process.env.GEMINI_API_KEY = "stub-key";
+    resetEnvCache();
+    embedSpy.mockImplementation(async (req) => liveResult(req));
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network is off")))); // generate() falls back to the demo fixture
+  };
+  const useDemo = () => {
+    process.env.AI_PROVIDER = "demo";
+    delete process.env.GEMINI_API_KEY;
+    resetEnvCache();
+    embedSpy.mockImplementation(realEmbed);
+    vi.unstubAllGlobals();
+  };
   const wipe = async () => {
     await sql`delete from note where owner_id like 'rg-%'`;
     await sql`delete from ask_event where user_id like 'rg-%'`;
@@ -56,6 +81,8 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
     idx = await import("@/lib/indexing");
     ret = await import("@/lib/retrieval");
     embedMod = await import("@/lib/ai/embed");
+    realEmbed = (await vi.importActual<typeof import("@/lib/ai")>("@/lib/ai")).embed;
+    ({ resetEnvCache } = await import("@/lib/env"));
     embedSpy = (await import("@/lib/ai")).embed as unknown as Mock;
     const [{ extversion }] = await sql`select extversion from pg_extension where extname = 'vector'`;
     process.stderr.write(`pgvector ${extversion}, iterative scan used: ${await ret.supportsIterativeScan()}\n`);
@@ -63,6 +90,7 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
 
   beforeEach(async () => {
     await wipe();
+    useDemo();
     embedSpy.mockClear();
   });
 
@@ -120,7 +148,8 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
       const created = await n.createNote(ada, { title: "Three paragraphs", body: paras.join("\n\n") });
       expect(texts()).toHaveLength(3);
       expect(embedSpy).toHaveBeenCalledTimes(1); // one batch for three chunks
-      expect(created.indexStatus).toBe("pending"); // the returned row predates indexing
+      expect(created.indexStatus).toBe("ready"); // the response reflects the final status
+      expect(await sql`select count from ai_usage where kind = 'embed'`).toEqual([]); // demo embeddings are free and uncounted
       const [{ index_status }] = await sql`select index_status from note where id = ${created.id}`;
       expect(index_status).toBe("ready");
 
@@ -152,9 +181,11 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
     });
 
     it("leaves notes pending, with search_text written, when the daily embed cap is used up", async () => {
+      useLive();
       await setUsage("embed", DAILY);
       const note = await n.createNote(ada, { title: "Capped note", visibility: "workspace", body: "Findable walrus keyword." });
       expect(embedSpy).not.toHaveBeenCalled();
+      expect(note.indexStatus).toBe("pending");
       const [row] = await sql`select index_status from note where id = ${note.id}`;
       expect(row.index_status).toBe("pending");
       const chunks = await sql`select search_text, embedding is null as no_vec from note_chunk where note_id = ${note.id}`;
@@ -171,8 +202,10 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
     });
 
     it("never throws into the request when embedding fails; keyword text is still written", async () => {
+      useLive();
       embedSpy.mockRejectedValueOnce(new Error("provider down"));
       const note = await n.createNote(ada, { title: "Offline note", body: "Findable okapi keyword." });
+      expect(note.indexStatus).toBe("pending");
       const [row] = await sql`select index_status from note where id = ${note.id}`;
       expect(row.index_status).toBe("pending");
       const [chunk] = await sql`select embedding is null as no_vec, tsv @@ plainto_tsquery('english','okapi') as hit from note_chunk where note_id = ${note.id}`;
@@ -183,20 +216,52 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
       expect((await sql`select index_status from note where id = ${note.id}`)[0].index_status).toBe("ready");
     });
 
-    it("embeds more than 32 chunks in batches of at most 32", async () => {
+    it("stores the model embed() actually returned when the gateway fell back to demo, keeps the note pending, and spends nothing", async () => {
+      useLive();
+      embedSpy.mockImplementation(async (req) => liveResult(req, true));
+      const note = await n.createNote(ada, { title: "Fallback note", body: "Some fallback text." });
+      expect(note.indexStatus).toBe("pending");
+      const [chunk] = await sql`select embedding_model from note_chunk where note_id = ${note.id}`;
+      expect(chunk.embedding_model).toBe(embedMod.DEMO_EMBED_MODEL);
+      expect(await sql`select count from ai_usage where kind = 'embed'`).toEqual([{ count: 0 }]);
+    });
+
+    it("reindex upgrades notes embedded in demo mode once a key is configured, and leaves current notes alone", async () => {
+      const a = await n.createNote(ada, { title: "Demo A", body: "demo embedded a" });
+      await n.createNote(ada, { title: "Demo B", body: "demo embedded b" });
+      expect(a.indexStatus).toBe("ready");
+      useLive();
+      await n.createNote(ada, { title: "Live C", body: "live embedded c" });
+      embedSpy.mockClear();
+      expect(await idx.reindexPending()).toEqual({ processed: 2, remaining: 0 });
+      expect(texts()).toHaveLength(2);
+      const rows = await sql`select distinct embedding_model from note_chunk where note_id in (select id from note where owner_id like 'rg-%')`;
+      expect(rows).toEqual([{ embedding_model: "gemini-embedding-2" }]);
+    });
+
+    it("counts demo-embedded notes as remaining when a key is configured and the cap blocks the upgrade", async () => {
+      await n.createNote(ada, { title: "Demo D", body: "demo embedded d" });
+      useLive();
+      await setUsage("embed", DAILY);
+      expect(await idx.reindexPending()).toEqual({ processed: 1, remaining: 1 });
+    });
+
+    it("reindexes at most about 50 chunks per call, then reports the rest", async () => {
+      const body = Array.from({ length: 18 }, (_, i) => para(`z${i}`, 1000)).join("\n\n");
+      for (let i = 0; i < 3; i++) await n.createNote(ada, { title: `Big ${i}`, body });
+      await sql`update note set index_status = 'pending' where owner_id = ${ada.id}`;
+      embedSpy.mockClear();
+      expect(await idx.reindexPending()).toEqual({ processed: 2, remaining: 1 });
+      expect(await idx.reindexPending()).toEqual({ processed: 1, remaining: 0 });
+    });
+
+    it("embeds a maximum-size note in calls of at most 32 texts", async () => {
       const big = Array.from({ length: 40 }, (_, i) => para(`w${i}`, 1000)).join("\n\n");
-      await sql`delete from ai_usage`;
-      process.env.EMBED_DAILY_CHUNKS = "1000";
-      (await import("@/lib/env")).resetEnvCache();
-      try {
-        const note = await n.createNote(ada, { title: "Big", body: big.slice(0, 20000) });
-        const sizes = embedSpy.mock.calls.map((c) => (c[0] as { texts: string[] }).texts.length);
-        expect(Math.max(...sizes)).toBeLessThanOrEqual(32);
-        expect(sizes.reduce((a, b) => a + b, 0)).toBe((await sql`select 1 from note_chunk where note_id = ${note.id}`).length);
-      } finally {
-        process.env.EMBED_DAILY_CHUNKS = String(DAILY);
-        (await import("@/lib/env")).resetEnvCache();
-      }
+      const note = await n.createNote(ada, { title: "Big", body: big.slice(0, 20000) });
+      const sizes = embedSpy.mock.calls.map((c) => (c[0] as { texts: string[] }).texts.length);
+      expect(sizes.length).toBeGreaterThan(0);
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(32);
+      expect(sizes.reduce((a, b) => a + b, 0)).toBe((await sql`select 1 from note_chunk where note_id = ${note.id}`).length);
     });
 
     it("skips the write when the note was edited while embedding", async () => {
@@ -233,6 +298,7 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
     });
 
     it("falls back to keyword search when the embed budget is spent, and when embed() fails", async () => {
+      useLive();
       const w = await n.createNote(ada, { title: "Quokka care", visibility: "workspace", body: "Quokkas eat leaves and grass." });
       await setUsage("embed", DAILY);
       const capped = await ask.ask(ben, { question: "What do quokkas eat?" });
@@ -241,13 +307,41 @@ describe.skipIf(!url)("RAG indexing and retrieval (Postgres + pgvector)", () => 
       embedSpy.mockRejectedValueOnce(new Error("down"));
       const r = await ask.ask(ben, { question: "What do quokkas eat?" });
       expect(r.citations.map((c) => c.noteId)).toEqual([w.id]);
+      // The failed query embedding gave its unit back.
+      expect(await sql`select count from ai_usage where kind = 'embed'`).toEqual([{ count: 0 }]);
     });
 
     it("refuses an unreadable-only topic in keyword mode too, without leaking", async () => {
+      useLive();
       await n.createNote(cleo, { title: "Private axolotl plan", body: "Axolotl heist plan." });
       await setUsage("embed", DAILY);
       const r = await ask.ask(ben, { question: "axolotl heist plan?" });
       expect(r).toMatchObject({ found: false, citations: [], mode: "keyword" });
+    });
+
+    it("a vector miss with only fully embedded readable notes refuses (demo fixture would have answered if the model were called)", async () => {
+      const words = Array.from({ length: 60 }, (_, i) => `term${i}`).join(" ");
+      await n.createNote(ada, { title: "Long note", visibility: "workspace", body: `${words} okapi` });
+      const r = await ask.ask(ben, { question: "okapi?" });
+      expect(r).toMatchObject({ found: false, citations: [], answer: ask.REFUSAL });
+    });
+
+    it("keyword fallback after a vector miss only looks at chunks vector search could not compare", async () => {
+      const words = Array.from({ length: 60 }, (_, i) => `term${i}`).join(" ");
+      // A: embedded, far from the query by vector, but containing the query's keyword.
+      await n.createNote(ada, { title: "Long note", visibility: "workspace", body: `${words} okapi` });
+      // B: saved without a vector (embedding failed), so it is only findable by keyword.
+      useLive();
+      embedSpy.mockRejectedValueOnce(new Error("down"));
+      const b = await n.createNote(ada, { title: "Heron note", visibility: "workspace", body: "Herons wade in shallow water." });
+      expect(b.indexStatus).toBe("pending");
+      useDemo();
+      // The question's keyword is only in A, which vector search already judged too far away: refuse.
+      expect(await ask.ask(ben, { question: "okapi?" })).toMatchObject({ found: false, citations: [] });
+      // A keyword that matches the unembedded note is found.
+      const hit = await ask.ask(ben, { question: "Where do herons wade?" });
+      expect(hit.found).toBe(true);
+      expect(hit.citations.map((c) => c.noteId)).toEqual([b.id]);
     });
 
     it("enforces 20 asks per user per hour (429) and the daily cap (429)", async () => {

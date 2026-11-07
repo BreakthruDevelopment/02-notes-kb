@@ -74,12 +74,13 @@ async function loadReadable(actor: Actor, id: string): Promise<NoteView> {
   return row;
 }
 
-/** Run the indexing hook after commit. It must never fail the request. */
-async function afterWrite(n: Note) {
+/** Run the indexing hook after commit. It must never fail the request. Returns the final index status. */
+async function afterWrite(n: Note): Promise<Note["indexStatus"]> {
   try {
-    await reindexNote(n);
+    return await reindexNote(n);
   } catch (err) {
     log.warn("note.reindex_failed", { noteId: n.id, error: err instanceof Error ? err.message : String(err) });
+    return "pending";
   }
 }
 
@@ -133,8 +134,8 @@ export async function createNote(actor: Actor, input: unknown): Promise<NoteView
       .returning();
     return row;
   });
-  await afterWrite(created);
-  return { ...created, access: "owner" };
+  const indexStatus = await afterWrite(created);
+  return { ...created, indexStatus, access: "owner" };
 }
 
 export async function updateNote(actor: Actor, id: string, input: unknown): Promise<NoteView> {
@@ -168,8 +169,8 @@ export async function updateNote(actor: Actor, id: string, input: unknown): Prom
     throw new ConflictError("This note changed since you opened it. Reload to see the latest version.");
   }
   const updated = rows[0];
-  if (contentChanged) await afterWrite(updated);
-  return { ...updated, access: current.access };
+  const indexStatus = contentChanged ? await afterWrite(updated) : updated.indexStatus;
+  return { ...updated, indexStatus, access: current.access };
 }
 
 export async function setVisibility(actor: Actor, id: string, visibility: unknown): Promise<NoteView> {

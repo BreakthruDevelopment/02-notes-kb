@@ -3,7 +3,10 @@
  * Proves the note ACL, sharing rules, limits and admin metadata view at the data layer.
  */
 import postgres from "postgres";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// These tests place chunks by hand to check the ACL and search; indexing itself is covered in rag.integration.test.ts.
+vi.mock("@/lib/indexing", () => ({ reindexNote: async () => undefined }));
 
 const url = process.env.TEST_DATABASE_URL;
 

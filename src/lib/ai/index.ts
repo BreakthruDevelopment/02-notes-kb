@@ -5,7 +5,8 @@ import { anthropicProvider, geminiProvider } from "./providers";
 import { type AiProvider, type GenerateRequest, type GenerateResult, AiError } from "./types";
 
 export { AiError } from "./types";
-export type { GenerateRequest, GenerateResult } from "./types";
+export type { EmbedRequest, EmbedResult, GenerateRequest, GenerateResult } from "./types";
+export { embed, liveEmbedModel, EMBED_DIMS, DEMO_EMBED_MODEL } from "./embed";
 
 /** Hard cap on what a user can send to a model, to bound cost and abuse. */
 export const MAX_PROMPT_CHARS = 12_000;

@@ -73,3 +73,20 @@ advisory lock so instances starting together can't race. `pnpm db:migrate` does 
 | `anthropic` | Claude (`ANTHROPIC_API_KEY`) |
 
 With `AI_FALLBACK_TO_DEMO=true`, a quota error or outage serves the recorded answer and the UI says so.
+
+### Embeddings: `embed()`
+
+`embed({ task, texts, kind: "document" | "query" })` from `src/lib/ai` returns
+`{ vectors, provider, model, dims, demo, latencyMs }`: 768-dim, L2-normalized vectors (fits pgvector's 2,000-dim
+HNSW limit). Limits: 32 texts per call, 8,000 characters each, 64,000 in total (`input_rejected`).
+
+- `gemini` calls `batchEmbedContents` with `AI_EMBED_MODEL` (default `gemini-embedding-2`, which takes the task in
+  the text: `task: search result | query: …` / `title: none | text: …`; set `gemini-embedding-001` to use `taskType`).
+  Changing the model changes the vector space: stored vectors must be re-embedded.
+- `demo` (and a missing key, or a provider failure while `AI_FALLBACK_TO_DEMO=true`) uses deterministic hashed
+  bag-of-words vectors, model `demo-hash-768`: lexical but meaningful, offline.
+- `AI_PROVIDER=anthropic` has no embeddings API, so it embeds with Gemini if `GEMINI_API_KEY` is set, else demo.
+- Always store `model` with each vector and only compare vectors with the same model; a demo fallback reports
+  `demo: true` and the demo model name so vector spaces are never mixed.
+- `AI_TIMEOUT_MS` (default 20000, max 22000) bounds every provider call, `generate()` and `embed()` alike.
+- Logs carry task, provider, model, count and latency, never the text.

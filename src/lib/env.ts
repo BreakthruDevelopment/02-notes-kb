@@ -22,6 +22,10 @@ const schema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+  // Embedding model for embed(). Confirm the name on the day (see README, "Embeddings").
+  AI_EMBED_MODEL: z.string().optional(),
+  // Provider call timeout. 20 s keeps AI calls inside Lambda's 29 s limit (route maxDuration is 25 s).
+  AI_TIMEOUT_MS: z.coerce.number().int().positive().max(22000).default(20000),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

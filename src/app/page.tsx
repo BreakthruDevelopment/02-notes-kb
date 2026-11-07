@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { DemoBadge, PageIntro, Panel, StatusBadge, buttonPrimary, buttonSecondary } from "@/components/ui";
+import { PageIntro, Panel, buttonPrimary, buttonSecondary } from "@/components/ui";
 
 const features = [
-  { title: "Sign-in with roles", body: "Email and password out of the box, OIDC providers by config, admin and user roles enforced on the server." },
-  { title: "Postgres", body: "Typed schema and migrations with Drizzle. Every query checks who is asking." },
-  { title: "AI feature", body: "One gateway for every model call: input limits, validated JSON output, and a demo fallback." },
-  { title: "Any cloud", body: "One container image, deployed to AWS, Azure, Google Cloud or Oracle Cloud with Terraform." },
+  { title: "Write and share", body: "Keep notes private by default, then share a note with a teammate as read-only or editable." },
+  { title: "Search", body: "Find notes by keyword or by meaning, limited to the notes you are allowed to see." },
+  { title: "Ask your notes", body: "Ask a question and get an answer that cites the notes it came from. Without a model key it runs in demo mode." },
+  { title: "Private by design", body: "Every read, search and answer is checked against who is asking, on the server." },
 ];
 
 export default function Home() {
@@ -33,17 +33,6 @@ export default function Home() {
           </Panel>
         ))}
       </div>
-      <Panel title="Status labels" action={<DemoBadge />}>
-        <p className="mb-3 text-muted">
-          The shared badges used across the portfolio. Not started is neutral, never an error.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <StatusBadge status="live" />
-          <StatusBadge status="building" />
-          <StatusBadge status="blocked" />
-          <StatusBadge status="not-started" />
-        </div>
-      </Panel>
     </>
   );
 }

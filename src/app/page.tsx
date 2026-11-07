@@ -15,8 +15,8 @@ export default function Home() {
           A production-shaped starting point.
         </h1>
         <p className="max-w-2xl text-muted">
-          Each app in the portfolio starts from this template and replaces the example
-          items with its own domain and AI feature.
+          Each app in the portfolio starts from this template and adds its own domain and AI
+          feature. This one is a notes wiki you can ask questions of.
         </p>
         <div className="flex flex-wrap gap-3">
           <Link

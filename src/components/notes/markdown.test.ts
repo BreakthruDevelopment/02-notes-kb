@@ -138,3 +138,19 @@ describe("parseMarkdown", () => {
     expect(hrefs(blocks)).toEqual([]);
   });
 });
+
+describe("double underscores inside words", () => {
+  it("keeps my__var and __init__ literal instead of bolding", () => {
+    const [block] = parseMarkdown("call my__var and x__init__ here");
+    expect(block.type).toBe("paragraph");
+    const children = block.type === "paragraph" ? block.children : [];
+    expect(children.some((n) => n.type === "strong")).toBe(false);
+    expect(JSON.stringify(children)).toContain("my__var");
+  });
+
+  it("still bolds __word__ at a word boundary", () => {
+    const [block] = parseMarkdown("this is __bold__ text");
+    const children = block.type === "paragraph" ? block.children : [];
+    expect(children.some((n) => n.type === "strong")).toBe(true);
+  });
+});

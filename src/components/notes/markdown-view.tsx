@@ -28,7 +28,7 @@ function InlineView({ node }: { node: Inline }) {
     <a
       href={node.href}
       className="break-all text-accent underline underline-offset-2"
-      {...(external ? { target: "_blank", rel: "noreferrer noopener" } : {})}
+      {...(external ? { target: "_blank", rel: "noopener noreferrer nofollow" } : {})}
     >
       {node.children.map((child, index) => (
         <InlineView key={index} node={child} />

@@ -23,7 +23,7 @@ export function DeleteNoteButton({ noteId }: { noteId: string }) {
       <button type="submit" disabled={pending} className={buttonDanger}>
         {pending ? "Deleting…" : "Delete note"}
       </button>
-      <button type="button" disabled={pending} className={buttonSecondary} onClick={() => setConfirming(false)}>
+      <button type="button" autoFocus disabled={pending} className={buttonSecondary} onClick={() => setConfirming(false)}>
         Cancel
       </button>
       {state.error && (

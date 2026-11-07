@@ -26,6 +26,10 @@ export function NoteForm({ mode, cancelHref, note }: Props) {
   const [state, formAction, pending] = useActionState(action, emptyFormState);
   const [tab, setTab] = useState<"write" | "preview">("write");
   const [body, setBody] = useState(note?.body ?? "");
+  // Controlled so a failed save (409 conflict, validation error) doesn't reset what the user typed:
+  // React resets uncontrolled fields after every form action.
+  const [title, setTitle] = useState(note?.title ?? "");
+  const [visibility, setVisibility] = useState<"private" | "workspace">(note?.visibility ?? "private");
   const conflict = state.error?.includes("changed since you opened it") ?? false;
 
   return (
@@ -38,7 +42,8 @@ export function NoteForm({ mode, cancelHref, note }: Props) {
           name="title"
           required
           maxLength={TITLE_MAX}
-          defaultValue={note?.title ?? ""}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
           disabled={pending}
           autoComplete="off"
           className={inputClass}
@@ -49,7 +54,8 @@ export function NoteForm({ mode, cancelHref, note }: Props) {
           <span>Visibility</span>
           <select
             name="visibility"
-            defaultValue={note?.visibility ?? "private"}
+            value={visibility}
+            onChange={(e) => setVisibility(e.target.value as "private" | "workspace")}
             disabled={pending}
             className={inputClass}
           >

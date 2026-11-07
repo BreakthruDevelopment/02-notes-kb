@@ -84,6 +84,10 @@ function readLink(
   return { node: { type: "link", href, children: parseInline(label, inlineDepth + 1) }, next };
 }
 
+function marker0IsUnderscoreInWord(input: string, i: number): boolean {
+  return input[i] === "_" && isWord(input[i - 1]);
+}
+
 function parseInline(input: string, depth = 0): Inline[] {
   if (depth > MAX_INLINE_DEPTH) return [{ type: "text", text: input }];
   const nodes: Inline[] = [];
@@ -107,6 +111,15 @@ function parseInline(input: string, depth = 0): Inline[] {
         i = end + 1;
         continue;
       }
+    }
+
+    // A run of underscores inside a word (my__var, x__init__) is literal text, like a single "_".
+    if (marker0IsUnderscoreInWord(input, i)) {
+      let j = i;
+      while (input[j] === "_") j++;
+      buf += input.slice(i, j);
+      i = j;
+      continue;
     }
 
     if (rest.startsWith("**") || rest.startsWith("__")) {

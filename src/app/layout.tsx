@@ -24,8 +24,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               {appName}
             </Link>
             <div className="flex items-center gap-4 text-sm">
-              <Link href="/dashboard" className="text-muted hover:text-foreground">
-                Dashboard
+              <Link href="/notes" className="text-muted hover:text-foreground">
+                Notes
               </Link>
               <Link href="/sign-in" className="text-muted hover:text-foreground">
                 Sign in

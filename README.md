@@ -8,8 +8,8 @@ image that deploys to AWS, Azure, Google Cloud or Oracle Cloud.
 
 _Each app replaces this section: the customer problem, who uses it, and what the AI feature does._
 
-The template ships an example "items" feature: users manage their own items, admins see everyone's, and
-an AI summary describes the list.
+Notes and knowledge base (work in progress): the schema, pgvector migration and AI gateway are in place;
+the notes API, retrieval and UI follow.
 
 ## Architecture
 

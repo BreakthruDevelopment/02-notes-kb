@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test against a running app (local, CI, or a deployed URL).
-# Signs up two users over HTTP and proves one can't delete the other's item.
+# Signs up two users over HTTP and checks the sign-in gate (full notes flow arrives with the notes API).
 #   BASE_URL=https://app7.breakthruventures.ai ./scripts/smoke.sh
 set -euo pipefail
 
@@ -27,26 +27,13 @@ signup "$JAR_A" "smoke-a-$RUN_ID@example.test"
 signup "$JAR_B" "smoke-b-$RUN_ID@example.test"
 pass "two users signed up"
 
-code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/items")
-[ "$code" = "401" ] || fail "anonymous list should be 401, got $code"
+# Notes API arrives in a later issue; until then prove the signed-in page gate works.
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/notes")
+[ "$code" = "307" ] || fail "anonymous /notes should redirect to sign-in, got $code"
 pass "anonymous access refused"
 
-item=$(curl -fsS -b "$JAR_A" -H 'content-type: application/json' -H "origin: $BASE_URL" \
-  -d '{"title":"smoke item"}' "$BASE_URL/api/items") || fail "create item failed"
-id=$(echo "$item" | sed -E 's/.*"id":"([^"]+)".*/\1/')
-[ -n "$id" ] || fail "no item id in $item"
-pass "user A created an item"
-
-code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -b "$JAR_B" -H "origin: $BASE_URL" "$BASE_URL/api/items/$id")
-[ "$code" = "403" ] || fail "user B deleting A's item should be 403, got $code"
-pass "user B blocked from A's item"
-
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -b "$JAR_A" -H "origin: $BASE_URL" "$BASE_URL/api/ai/summarize")
-[ "$code" = "200" ] || fail "AI summary should be 200, got $code"
-pass "AI summary responds"
-
-code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -b "$JAR_A" -H "origin: $BASE_URL" "$BASE_URL/api/items/$id")
-[ "$code" = "204" ] || fail "owner delete should be 204, got $code"
-pass "owner deleted their item"
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR_A" "$BASE_URL/notes")
+[ "$code" = "200" ] || fail "signed-in /notes should be 200, got $code"
+pass "signed-in user reaches /notes"
 
 echo "SMOKE PASS"

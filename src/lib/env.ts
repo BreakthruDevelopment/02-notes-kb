@@ -26,6 +26,11 @@ const schema = z.object({
   AI_EMBED_MODEL: z.string().optional(),
   // Provider call timeout. 20 s keeps AI calls inside Lambda's 29 s limit (route maxDuration is 25 s).
   AI_TIMEOUT_MS: z.coerce.number().int().positive().max(22000).default(20000),
+  // Notes and knowledge base budgets (spec: Data model, AI feature).
+  EMBED_DAILY_CHUNKS: z.coerce.number().int().positive().default(1500),
+  ASK_DAILY_CAP: z.coerce.number().int().positive().default(300),
+  // Maximum cosine distance for a chunk to count as relevant. Tune on the seed.
+  RAG_MAX_DISTANCE: z.coerce.number().positive().max(2).default(0.55),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

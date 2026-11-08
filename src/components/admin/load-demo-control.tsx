@@ -6,8 +6,13 @@ import { emptyDemoState } from "@/components/admin/state";
 import { buttonPrimary, buttonSecondary } from "@/components/ui/styles";
 
 export function LoadDemoControl() {
-  const [state, action, pending] = useActionState(loadDemoWorkspaceAction, emptyDemoState);
   const [confirming, setConfirming] = useState(false);
+  // Close the confirm step once the server answers, so another load always needs a new confirmation.
+  const [state, action, pending] = useActionState(async (prev: typeof emptyDemoState) => {
+    const next = await loadDemoWorkspaceAction(prev);
+    setConfirming(false);
+    return next;
+  }, emptyDemoState);
 
   return (
     <div className="space-y-3">

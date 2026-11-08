@@ -19,7 +19,7 @@ export const ASKS_PER_USER_PER_HOUR = 20;
 export const PROMPT_BUDGET = 9_000;
 export const REFUSAL = "None of the notes you can read cover this.";
 
-export const askSchema = z.object({ question: z.string().trim().min(1, "Ask a question").max(QUESTION_MAX) });
+export const askSchema = z.object({ question: z.string().trim().min(1, "Ask a question").max(QUESTION_MAX, `Questions are at most ${QUESTION_MAX} characters.`) });
 
 export const ragAnswerSchema = z.object({
   found: z.boolean(),

@@ -7,6 +7,7 @@ import { admin } from "better-auth/plugins";
 import { db, schema } from "@/lib/db";
 import { isDemoEmail, MARKER } from "@/lib/demo-identity";
 import { env } from "@/lib/env";
+import { ac, DISABLED_AUTH_PATHS, roles } from "./permissions";
 
 /**
  * Demo identities are created only by the server-side loader (no HTTP request in the
@@ -56,7 +57,13 @@ function createAuth() {
     advanced: {
       useSecureCookies: e.APP_URL.startsWith("https://"),
     },
-    plugins: [admin({ defaultRole: "user", adminRoles: ["admin"] }), nextCookies()],
+    // Admins manage roles, bans and accounts but cannot impersonate or reset passwords
+    // (see permissions.ts). The paths are also blocked outright, as a second layer.
+    disabledPaths: DISABLED_AUTH_PATHS,
+    plugins: [
+      admin({ ac, roles, defaultRole: "user", adminRoles: ["admin"] }),
+      nextCookies(),
+    ],
   });
 }
 

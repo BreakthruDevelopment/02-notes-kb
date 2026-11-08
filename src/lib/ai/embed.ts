@@ -98,7 +98,7 @@ export async function embed(req: EmbedRequest): Promise<EmbedResult> {
     return finish(raw.map(l2Normalize), "gemini", model, false);
   } catch (err) {
     const kind = err instanceof AiError ? err.kind : "provider";
-    log.warn("ai.embed.failed", { task: req.task, provider: "gemini", kind });
+    log.warn("ai.embed.failed", { task: req.task, provider: "gemini", kind, status: err instanceof AiError ? err.status : undefined });
     if (env().AI_FALLBACK_TO_DEMO) return demoResult();
     throw err instanceof AiError ? err : new AiError("Embedding request failed", "provider");
   }

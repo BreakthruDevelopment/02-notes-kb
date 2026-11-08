@@ -1,12 +1,13 @@
-import { env } from "@/lib/env";
 import { type AiProvider, AiError } from "./types";
+
+const TIMEOUT_MS = 30_000;
 
 async function post(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(env().AI_TIMEOUT_MS),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (res.status === 429) throw new AiError("Model quota reached", "quota");
   if (!res.ok) {
@@ -62,39 +63,4 @@ export function anthropicProvider(apiKey: string, model: string): AiProvider {
       return text;
     },
   };
-}
-
-/**
- * Gemini batchEmbedContents. `gemini-embedding-2` takes the task as an instruction inside the text;
- * older models (`gemini-embedding-001`) take a `taskType` field. Vectors are returned as sent by the API;
- * the caller validates and normalizes them.
- */
-export async function geminiEmbed(
-  apiKey: string,
-  model: string,
-  texts: string[],
-  kind: "document" | "query",
-  dims: number,
-): Promise<number[][]> {
-  const instructed = model.startsWith("gemini-embedding-2");
-  const requests = texts.map((text) => ({
-    model: `models/${model}`,
-    content: {
-      parts: [{ text: instructed ? embedInstruction(kind, text) : text }],
-    },
-    ...(instructed ? {} : { taskType: kind === "query" ? "RETRIEVAL_QUERY" : "RETRIEVAL_DOCUMENT" }),
-    outputDimensionality: dims,
-  }));
-  const json = (await post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:batchEmbedContents`,
-    { "x-goog-api-key": apiKey },
-    { requests },
-  )) as { embeddings?: { values?: number[] }[] };
-  return (json.embeddings ?? []).map((e) => e.values ?? []);
-}
-
-function embedInstruction(kind: "document" | "query", text: string): string {
-  return kind === "query"
-    ? `task: search result | query: ${text}`
-    : `title: none | text: ${text}`;
 }

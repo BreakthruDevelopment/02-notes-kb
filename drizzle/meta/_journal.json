@@ -8,20 +8,6 @@
       "when": 1793690781030,
       "tag": "0000_init",
       "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1794082692386,
-      "tag": "0001_enable-pgvector",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1794083300125,
-      "tag": "0002_notes-schema",
-      "breakpoints": true
     }
   ]
 }

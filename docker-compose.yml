@@ -1,8 +1,8 @@
-# Local development database (Postgres 16 with pgvector for RAG apps).
+# Local development database (Postgres 17 with pgvector for RAG apps).
 #   docker compose up -d db
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app

@@ -1,7 +1,7 @@
 import type { z } from "zod";
 
 export type GenerateRequest<T> = {
-  /** Stable name for this AI feature, e.g. "rag-answer". Used for demo fixtures and logs. */
+  /** Stable name for this AI feature, e.g. "summarize-items". Used for demo fixtures and logs. */
   task: string;
   system: string;
   prompt: string;
@@ -35,22 +35,3 @@ export class AiError extends Error {
     this.name = "AiError";
   }
 }
-
-export type EmbedRequest = {
-  /** Stable name for the caller, e.g. "embed-note". Used in logs. */
-  task: string;
-  texts: string[];
-  /** "document" for content being indexed, "query" for a search question. */
-  kind: "document" | "query";
-};
-
-export type EmbedResult = {
-  /** One L2-normalized vector per input text, in order. */
-  vectors: number[][];
-  provider: string;
-  /** Callers must store this with the vector and only compare vectors with the same model. */
-  model: string;
-  dims: number;
-  demo: boolean;
-  latencyMs: number;
-};

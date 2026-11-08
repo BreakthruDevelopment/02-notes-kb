@@ -4,11 +4,10 @@
  * Each app adds a fixture for each AI task it defines.
  */
 export const demoFixtures: Record<string, unknown> = {
-  "rag-answer": {
-    found: true,
-    answer:
-      "Demo answer (recorded, not from a live model): the notes cited here are the closest matches you can read. [S1] [S2]",
-    citations: ["S1", "S2"],
+  "summarize-items": {
+    summary:
+      "You have a few open items. The most recent ones focus on setup work; nothing looks overdue.",
+    highlights: ["Setup tasks are the largest group", "No items are flagged urgent"],
   },
 };
 

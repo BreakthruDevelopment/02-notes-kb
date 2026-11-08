@@ -1,52 +1,46 @@
 import Link from "next/link";
-import { DemoDataBanner } from "@/components/notes/demo-banner";
-import { PageIntro, Panel, buttonPrimary, buttonSecondary } from "@/components/ui";
 
 const features = [
-  {
-    title: "Write and share",
-    body: "Keep notes private by default, then share a note with a teammate as read-only or editable.",
-  },
-  {
-    title: "Search",
-    body: "Find notes by keyword, limited to the notes you are allowed to see.",
-  },
-  {
-    title: "Ask your notes",
-    body: "Ask a question and get an answer that cites the notes it came from. Without a model key it runs in demo mode.",
-  },
-  {
-    title: "Private by design",
-    body: "Every read, search, and answer is checked against who is asking, on the server.",
-  },
+  { title: "Sign-in with roles", body: "Email and password out of the box, OIDC providers by config, admin and user roles enforced on the server." },
+  { title: "Postgres", body: "Typed schema and migrations with Drizzle. Every query checks who is asking." },
+  { title: "AI feature", body: "One gateway for every model call: input limits, validated JSON output, and a demo fallback." },
+  { title: "Any cloud", body: "One container image, deployed to AWS, Azure, Google Cloud or Oracle Cloud with Terraform." },
 ];
 
 export default function Home() {
   return (
-    <>
-      <DemoDataBanner />
-      <PageIntro
-        section="Notes"
-        title="A notes wiki you can ask questions of."
-        description="Write notes, share the ones you choose, and ask questions answered only from notes you can read."
-        actions={
-          <>
-            <Link href="/sign-in" className={buttonPrimary}>
-              Sign in
-            </Link>
-            <Link href="/notes" className={buttonSecondary}>
-              Open notes
-            </Link>
-          </>
-        }
-      />
-      <div className="grid gap-x-4 sm:grid-cols-2">
-        {features.map((feature) => (
-          <Panel key={feature.title} title={feature.title}>
-            <p className="text-muted">{feature.body}</p>
-          </Panel>
+    <div className="space-y-10">
+      <section className="space-y-4">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          A production-shaped starting point.
+        </h1>
+        <p className="max-w-2xl text-muted">
+          Each app in the portfolio starts from this template and replaces the example
+          items with its own domain and AI feature.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="/sign-in"
+            className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-accent-foreground"
+          >
+            Get started
+          </Link>
+          <Link
+            href="/api/health"
+            className="rounded-card border border-border px-4 py-2 text-sm font-medium"
+          >
+            Health check
+          </Link>
+        </div>
+      </section>
+      <section className="grid gap-4 sm:grid-cols-2">
+        {features.map((f) => (
+          <div key={f.title} className="rounded-card border border-border bg-surface p-5">
+            <h2 className="font-medium">{f.title}</h2>
+            <p className="mt-1 text-sm text-muted">{f.body}</p>
+          </div>
         ))}
-      </div>
-    </>
+      </section>
+    </div>
   );
 }

@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  APP_NAME: z.string().default("Notes and Knowledge Base"),
+  APP_NAME: z.string().default("30 Apps Template"),
   // The public URL, e.g. https://app7.breakthruventures.ai. Sign-in callbacks,
   // cookies and CORS all derive from it, so a domain change never touches code.
   APP_URL: z.string().url().default("http://localhost:3000"),
@@ -22,15 +22,6 @@ const schema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
-  // Embedding model for embed(). Confirm the name on the day (see README, "Embeddings").
-  AI_EMBED_MODEL: z.string().optional(),
-  // Provider call timeout. 20 s keeps AI calls inside Lambda's 29 s limit (route maxDuration is 25 s).
-  AI_TIMEOUT_MS: z.coerce.number().int().positive().max(22000).default(20000),
-  // Notes and knowledge base budgets (spec: Data model, AI feature).
-  EMBED_DAILY_CHUNKS: z.coerce.number().int().positive().default(1500),
-  ASK_DAILY_CAP: z.coerce.number().int().positive().default(300),
-  // Maximum cosine distance for a chunk to count as relevant. Tune on the seed.
-  RAG_MAX_DISTANCE: z.coerce.number().positive().max(2).default(0.55),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

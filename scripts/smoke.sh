@@ -22,7 +22,7 @@ for path in / /sign-in; do
 done
 pass "pages render inside the shared shell"
 
-for path in /notes /admin; do
+for path in /notes /ask /admin; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL$path")
   [ "$code" = "307" ] || fail "signed-out $path should redirect (307), got $code"
 done

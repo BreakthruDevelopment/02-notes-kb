@@ -7,7 +7,7 @@ on:
     inputs:
       base_url:
         description: Site to test
-        default: https://app-notes-kb.salmonpebble-b870873b.eastus.azurecontainerapps.io
+        default: https://app2.breakthruventures.ai
   push:
     branches: ["claude/live-smoke*"]
 
@@ -22,5 +22,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Smoke test the live site
         env:
-          BASE_URL: ${{ inputs.base_url || 'https://app-notes-kb.salmonpebble-b870873b.eastus.azurecontainerapps.io' }}
+          BASE_URL: ${{ inputs.base_url || 'https://app2.breakthruventures.ai' }}
         run: bash scripts/smoke.sh

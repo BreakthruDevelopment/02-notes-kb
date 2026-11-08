@@ -1,6 +1,6 @@
 import { DemoBadge } from "@/components/ui";
 
-/** Demo-data warning for the public landing page and the new-note form. */
+/** Demo-data warning for the landing page, the new-note form, and Ask. */
 export function DemoDataBanner() {
   return (
     <div

@@ -12,5 +12,6 @@ export const PARENT_SITE = { href: "https://breakthruventures.ai", label: "Explo
 /** Header navigation. `adminOnly` links are hidden for other users; pages still enforce the role. */
 export const NAV_LINKS: { href: string; label: string; adminOnly?: boolean }[] = [
   { href: "/notes", label: "Notes" },
+  { href: "/ask", label: "Ask" },
   { href: "/admin", label: "Admin", adminOnly: true },
 ];

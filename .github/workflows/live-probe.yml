@@ -1,0 +1,21 @@
+name: Live AI probe
+on:
+  push:
+    branches: ["claude/live-smoke-probe"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check embeddings and answers use Gemini
+        env:
+          B: https://app-notes-kb.salmonpebble-b870873b.eastus.azurecontainerapps.io
+        run: |
+          set -e
+          J=$(mktemp); ID="probe-$(date +%s)-$RANDOM"
+          curl -s -c $J -H 'content-type: application/json' -H "origin: $B" -d "{\"email\":\"$ID@example.test\",\"password\":\"probe-pw-$ID\",\"name\":\"Probe\"}" $B/api/auth/sign-up/email >/dev/null
+          curl -s -b $J -H 'content-type: application/json' -H "origin: $B" -d '{"title":"Office plants","body":"The office ficus is watered every Tuesday by the facilities team."}' $B/api/notes | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const n=JSON.parse(d);console.log("note indexStatus:",n.indexStatus??n.note?.indexStatus);require("fs").writeFileSync("id",n.id??n.note?.id)})'
+          curl -s -b $J -H 'content-type: application/json' -H "origin: $B" -d '{"question":"When is the ficus watered?"}' $B/api/ask | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const a=JSON.parse(d);console.log("mode:",a.mode,"found:",a.found,"citations:",a.citations?.length);console.log("answer:",String(a.answer).slice(0,200))})'
+          curl -s -o /dev/null -w 'cleanup delete: %{http_code}\n' -X DELETE -b $J -H "origin: $B" $B/api/notes/$(cat id)
